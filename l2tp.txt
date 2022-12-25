@@ -1,0 +1,112 @@
+apt-get install -y build-essential libgmp3-dev bison flex make automake gcc -y
+
+
+wget https://download.openswan.org/openswan/openswan-latest.tar.gz
+tar xf openswan-latest.tar.gz   
+cd openswan-2.6.50/
+    make programs
+    make KERNELSRC=/lib/modules/`uname -r`/build module
+    sudo make KERNELSRC=/lib/modules/`uname -r`/build install minstall
+   make programs
+            make KERNELSRC=/usr/src/linux module
+            sudo make KERNELSRC=/usr/src/linux install minstall
+
+
+apt install xl2tpd ppp -y
+
+
+echo "$1 %any  0.0.0.0: PSK \"test\"" > /etc/ipsec.secrets
+
+rm /etc/ipsec.conf
+touch /etc/ipsec.conf
+echo  "
+version	2.0
+
+config setup
+        nat_traversal=yes
+        virtual_private=%v4:192.168.0.0/16,%v4:10.0.0.0/8,%v4:172.16.0.0/12,%v4:25.0.0.0/8,%v4:!10.254.253.0/24
+        protostack=netkey
+        interfaces="%defaultroute"
+        oe=off
+
+conn l2tp-psk
+        authby=secret
+        pfs=no
+        auto=add
+        rekey=no
+        type=transport
+        left=$1
+        leftprotoport=17/1701
+        right=%any
+        rightprotoport=17/%any
+        rightsubnet=vhost:%priv,%no
+" > /etc/ipsec.conf
+
+rm /etc/xl2tpd/xl2tpd.conf
+touch /etc/xl2tpd/xl2tpd.conf
+
+echo "[global]
+
+listen-addr = $1
+[lns default]
+ip range = 10.254.253.128-10.254.253.250
+local ip = 10.254.253.1
+assign ip = yes
+require chap = yes
+refuse pap = yes
+require authentication = yes
+name = OpenswanVPN
+ppp debug = yes
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
+" > /etc/xl2tpd/xl2tpd.conf
+
+
+echo "
+ipcp-accept-local
+ipcp-accept-remote
+ms-dns  $1
+noccp
+auth
+crtscts
+idle 1800
+mtu 1200
+mru 1200
+nodefaultroute
+debug
+lock
+proxyarp
+connect-delay 5000
+" > /etc/ppp/options.xl2tpd 
+
+echo "
+test            *       \"test\"     10.254.253.128/25
+*               test    \"test\"     10.254.253.128/25
+test2           *       \"test\"     10.254.253.128/25
+*               test2   \"test\"     10.254.253.128/25
+boss            *       \"test\"     10.254.253.2
+*               boss    \"test\"     10.254.253.2
+" > /etc/ppp/chap-secrets
+
+
+
+echo "
+net.ipv4.ip_forward = 1
+net.ipv4.conf.default.rp_filter = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+" > /etc/sysct.conf
+sysctl -p
+iptables -L -n
+iptables --table nat --append POSTROUTING --jump MASQUERADE
+echo 1 > /proc/sys/net/ipv4/ip_forward
+for each in /proc/sys/net/ipv4/conf/*
+do
+echo 0 > $each/accept_redirects
+echo 0 > $each/send_redirects
+done
+
+/etc/init.d/xl2tpd restart
+/etc/init.d/ipsec restart
